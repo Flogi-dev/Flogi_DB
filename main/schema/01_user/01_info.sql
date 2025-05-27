@@ -1,93 +1,101 @@
--- =====================================================================================
--- 파일: 01_user_info.sql
--- 모듈: 01_user_module (사용자 모듈)
--- 설명: 모든 사용자의 기본 정보를 저장합니다.
--- 대상 DB: PostgreSQL Primary RDB (핵심 사용자 데이터)
--- 파티셔닝: 없음 (직접 접근, 일반적으로 시계열 또는 로그와 같은 형태가 아님)
--- MVP 중점사항: 핵심 필드, 공통 ENUM 타입 참조, 기본 인덱스, 약관 동의 시각 기록.
--- 스케일업 고려사항: 데이터 접근 제어를 위한 RLS(Row-Level Security), email/phone CITEXT 타입 전환.
--- =====================================================================================
+-- 00_DB/main/schema/01_user/01_info_new.sql
+-- Module: 01_user (사용자 모듈)
+-- Description: 모든 사용자의 기본 정보를 저장합니다. (새 규칙 적용 버전)
+-- Target DB: PostgreSQL Primary RDB
+-- Requires: 00_common_helper_functions.sql, 00_common_global_enums.sql (또는 통합된 ENUM 파일)
+--           CITEXT extension (CREATE EXTENSION IF NOT EXISTS citext;)
 
--- 사용자 정보 기본 테이블
-CREATE TABLE user_info (
-  -- 🆔 기본 식별자
-  uuid SERIAL PRIMARY KEY,                                  -- 내부 자동 증가 uuid (참조용)
-  id id UNIQUE NOT NULL DEFAULT gen_random_id(),    -- 외부 공개용 고유 식별자 (노출 가능, 충돌 방지)
+-- 사용자 정보 기본 테이블 (새 규칙 적용)
+CREATE TABLE user_info_new (
+  -- 🆔 기본 식별자 (새 규칙 적용)
+  internal_user_info_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(), -- 내부 전용 UUID PK
+  user_info_public_id TEXT UNIQUE NOT NULL DEFAULT gen_random_id('usr_', 16), -- 외부 공개용 고유 ID (16자리 랜덤 문자열)
 
-  account_links JSONB DEFAULT '{}'::JSONB,                -- 사용자의 다른 내부 서비스/모듈 계정 연결 정보 (예: {"team_id": "some-team-id", "organization_uuid": "org-uuid-123"})
-  oauth_links JSONB DEFAULT '{}'::JSONB,                  -- 소셜 연동 상태 플래그 및 간략 정보 (UI 최적화용 캐시, 예: {"google_linked": true, "kakao_nickname": "라이언"})
+  -- 🔗 계정 연결 정보
+  account_links JSONB DEFAULT '{}'::JSONB, -- 사용자의 다른 내부 서비스/모듈 계정 연결 정보. 예: {"team_uuid": "팀UUID", "organization_uuid": "조직UUID"}
+  -- oauth_links JSONB: user_oauth 테이블로 기능 이전 또는 최소 정보만 캐싱. 여기서는 제거하고 user_oauth 테이블 직접 참조 권장.
 
   -- 👤 사용자 기본 정보
-  account_type user_account_type_enum DEFAULT 'personal',      -- 계정 유형 (00_common_functions_and_types.sql 정의된 ENUM 타입 적용)
-  username TEXT NOT NULL,                                 -- 사용자 표시명 (닉네임 또는 이름, 로그인 시 사용될 수도 있음, 앱 레벨에서 고유성 및 정책 관리)
-  email TEXT UNIQUE NOT NULL,                             -- 이메일 주소 (로그인 uuid, 고유). (스케일업 시: CITEXT 타입으로 대소문자 구분 없는 고유성 검토)
-  phone TEXT UNIQUE,                                      -- 전화번호 (선택사항, 인증 또는 알림 용도, 앱 레벨에서 고유성 관리). (스케일업 시: CITEXT 타입 및 E.164 정규화 검토)
-  profile_img TEXT,                                       -- 사용자 프로필 사진 경로 또는 URL (NULL 가능)
+  username CITEXT UNIQUE, -- 사용자 별명 또는 로그인 ID (앱 레벨에서 고유성 및 정책 관리, CITEXT로 대소문자 무관 고유성)
+                         -- NULL 허용 여부: MVP에서는 NULL 허용, 정식 서비스 시 NOT NULL 고려
+  full_name TEXT,        -- 사용자 전체 이름 (실명)
+  email CITEXT UNIQUE NOT NULL, -- 사용자 이메일 주소 (CITEXT로 대소문자 무관 고유성)
+  phone CITEXT UNIQUE,   -- 사용자 전화번호 (CITEXT로 대소문자 무관 고유성, 국가번호 포함 저장 권장)
+  profile_img_url TEXT,  -- 사용자 프로필 사진 URL (외부 저장소 URL)
+  bio TEXT,              -- 사용자 자기소개
 
-  -- ✅ 인증 상태
-  email_verified_at TIMESTAMP,                            -- 이메일 인증 완료 시각 (NULL이면 미인증)
-  phone_verified_at TIMESTAMP,                            -- 전화번호 인증 완료 시각 (NULL이면 미인증)
-  two_factor_enabled BOOLEAN DEFAULT FALSE,               -- 2단계 인증 활성화 여부
+  -- ⚙️ 계정 상태 및 유형
+  account_type user_account_type_enum NOT NULL DEFAULT 'individual'::user_account_type_enum, -- 계정 유형 (ENUM)
+  account_status user_account_status_enum NOT NULL DEFAULT 'pending_verification'::user_account_status_enum, -- 계정 상태 (ENUM)
+  is_active BOOLEAN NOT NULL DEFAULT FALSE, -- 계정 활성화 여부 (account_status와 연동되거나 별도 관리 가능, 여기서는 명시적 플래그)
+  is_beta_tester BOOLEAN NOT NULL DEFAULT FALSE, -- 베타 테스터 여부
+  email_verified_at TIMESTAMPTZ,          -- 이메일 인증 완료 시각 (UTC)
+  phone_verified_at TIMESTAMPTZ,          -- 전화번호 인증 완료 시각 (UTC)
 
-  -- 🛡️ 계정 상태 관리
-  is_active BOOLEAN DEFAULT TRUE,                         -- 계정 활성 상태 (비활성화 시 로그인 차단)
-  is_suspended BOOLEAN DEFAULT FALSE,                     -- 계정 정지 여부
-  suspended_reason TEXT,                                  -- 정지 사유 (관리자 메모용)
-  last_login_at TIMESTAMP,                                -- 마지막 로그인 시각 (보안 및 통계용)
-  last_active_date DATE,                                  -- 마지막 활동 일자 (휴면 계정 감지용, 일 단위 업데이트)
+  -- 🌍 환경 설정
+  nation TEXT,                           -- 사용자 국가 코드 (ISO 3166-1 Alpha-2, 예: KR, US)
+  timezone TEXT DEFAULT 'UTC',           -- 사용자 선호 시간대 (IANA Time Zone Database, 예: Asia/Seoul). 기본값 UTC 권장.
+  language TEXT DEFAULT 'en',            -- 사용자 선호 서비스 UI 언어 (예: ko, en)
 
-  -- 🌐 환경 설정
-  nation TEXT DEFAULT 'KR',                               -- 국가 코드 (ISO-3166 Alpha-2, 기본값 KR)
-  timezone TEXT DEFAULT 'Asia/Seoul',                     -- 시간대 (IANA 기준, 기본: 서울)
-  language TEXT DEFAULT 'ko',                             -- 기본 UI 언어 (ko, en 등)
+  -- 📜 약관 동의
+  agreed_terms_at TIMESTAMPTZ,           -- 서비스 이용약관 동의 시각 (UTC)
+  agreed_privacy_at TIMESTAMPTZ,         -- 개인정보 수집 및 이용 동의 시각 (UTC)
+  agreed_marketing_at TIMESTAMPTZ,       -- 마케팅 정보 수신 동의 시각 (UTC)
 
-  -- 📜 약관 동의 (인수인계 문서 Ver.2 반영: 동의 시각 기록)
-  agreed_terms_at TIMESTAMP,                              -- 서비스 약관 동의 시각 (NULL이면 미동의)
-  agreed_privacy_at TIMESTAMP,                            -- 개인정보 수집 동의 시각 (NULL이면 미동의)
-  agreed_marketing_at TIMESTAMP,                          -- 마케팅 수신 동의 시각 (NULL이면 미동의 또는 동의 철회)
+  -- 🔑 마지막 활동
+  last_login_at TIMESTAMPTZ,             -- 마지막 로그인 시각 (UTC)
 
-  -- 🕒 기록
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 사용자 등록 시각
-  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP -- 정보 갱신 시각 (trg_set_updated_at_user_info 트리거로 자동 관리)
+  -- 🕒 기록 타임스탬프 (새 규칙 적용)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 레코드 생성 시각 (UTC)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP  -- 레코드 마지막 수정 시각 (UTC)
 );
 
-COMMENT ON TABLE user_info IS '사용자의 핵심 프로필 정보를 저장합니다.';
-COMMENT ON COLUMN user_info.uuid IS '내부 시스템에서 사용하는 자동 증가 사용자 uuid입니다.';
-COMMENT ON COLUMN user_info.id IS '외부 시스템 연동 또는 API 노출 시 사용되는 고유 사용자 식별자입니다.';
-COMMENT ON COLUMN user_info.account_links IS '사용자의 다른 내부 서비스/모듈 계정 연결 정보입니다. 예: {"team_id": "some-team-id"}';
-COMMENT ON COLUMN user_info.oauth_links IS '소셜 연동 상태 플래그 및 간략한 캐시 정보입니다. UI 최적화에 사용될 수 있습니다. 예: {"google_linked": true, "kakao_profile_image_url": "..."}';
-COMMENT ON COLUMN user_info.account_type IS '사용자 계정의 유형을 나타냅니다 (00_common_functions_and_types.sql 정의된 user_account_type_enum 값).';
-COMMENT ON COLUMN user_info.username IS '사용자 표시명 (닉네임 또는 이름)입니다. 앱 레벨에서 고유성 및 사용 정책이 관리될 수 있습니다.';
-COMMENT ON COLUMN user_info.email IS '사용자의 기본 이메일 주소로, 로그인 uuid 및 주요 소통 수단으로 사용됩니다. 시스템 내에서 고유해야 합니다.';
-COMMENT ON COLUMN user_info.phone IS '사용자의 전화번호입니다. 선택 사항이며, 인증 또는 알림 용도로 사용될 수 있습니다. 앱 레벨에서 고유성이 관리될 수 있습니다.';
-COMMENT ON COLUMN user_info.profile_img IS '사용자 프로필 사진의 경로 또는 URL입니다. NULL일 수 있습니다.';
-COMMENT ON COLUMN user_info.email_verified_at IS '사용자의 이메일 주소가 인증된 시각입니다. NULL인 경우 아직 인증되지 않았음을 의미합니다.';
-COMMENT ON COLUMN user_info.phone_verified_at IS '사용자의 전화번호가 인증된 시각입니다. NULL인 경우 아직 인증되지 않았음을 의미합니다.';
-COMMENT ON COLUMN user_info.two_factor_enabled IS '사용자가 2단계 인증(Two-Factor Authentication)을 활성화했는지 여부입니다.';
-COMMENT ON COLUMN user_info.is_active IS '계정이 현재 활성 상태인지 여부를 나타냅니다. 비활성 계정은 서비스 로그인이 제한될 수 있습니다.';
-COMMENT ON COLUMN user_info.is_suspended IS '계정이 운영 정책 위반 등으로 인해 일시 정지된 상태인지 여부입니다.';
-COMMENT ON COLUMN user_info.suspended_reason IS '계정이 정지된 경우, 그 사유에 대한 관리자 또는 시스템 메모입니다.';
-COMMENT ON COLUMN user_info.last_login_at IS '사용자가 마지막으로 서비스에 성공적으로 로그인한 시각입니다.';
-COMMENT ON COLUMN user_info.last_active_date IS '사용자의 마지막 활동 일자로, 휴면 계정 처리 등의 기준으로 사용될 수 있습니다.';
-COMMENT ON COLUMN user_info.nation IS '사용자의 국가 코드입니다 (ISO 3166-1 Alpha-2 기준, 예: KR, US).';
-COMMENT ON COLUMN user_info.timezone IS '사용자가 선호하는 시간대입니다 (IANA Time Zone Database 기준, 예: Asia/Seoul).';
-COMMENT ON COLUMN user_info.language IS '사용자가 선호하는 서비스 UI 언어입니다 (예: ko, en).';
-COMMENT ON COLUMN user_info.agreed_terms_at IS '서비스 이용약관에 동의한 시각입니다. NULL인 경우 약관에 동의하지 않았음을 의미합니다.';
-COMMENT ON COLUMN user_info.agreed_privacy_at IS '개인정보 수집 및 이용에 동의한 시각입니다. NULL인 경우 동의하지 않았음을 의미합니다.';
-COMMENT ON COLUMN user_info.agreed_marketing_at IS '마케팅 정보 수신에 동의한 시각입니다. NULL인 경우 동의하지 않았거나 동의를 철회했음을 의미합니다.';
-COMMENT ON COLUMN user_info.created_at IS '해당 사용자 정보 레코드가 데이터베이스에 처음 생성된 시각입니다.';
-COMMENT ON COLUMN user_info.updated_at IS '해당 사용자 정보 로우가 마지막으로 수정된 시각입니다.';
+-- 기존 테이블의 트리거와 유사하게 updated_at 자동 갱신 트리거 추가 필요
+CREATE TRIGGER trg_user_info_new_set_updated_at
+BEFORE UPDATE ON user_info_new
+FOR EACH ROW EXECUTE FUNCTION fn_set_updated_at(); -- fn_set_updated_at 함수는 00_common_functions_and_types.sql 에 정의되어 있어야 함
 
--- user_info 테이블 인덱스
-CREATE INDEX uuidx_user_username ON user_info(username); -- 사용자명 검색을 위해 (로그인 시 username 사용 가능성 고려)
-CREATE INDEX uuidx_user_account_type ON user_info(account_type);
-CREATE INDEX uuidx_user_is_active ON user_info(is_active); -- 활성 사용자 필터링
-CREATE INDEX uuidx_user_last_login_at ON user_info(last_login_at DESC NULLS LAST); -- 최근 로그인 사용자 조회
--- email 및 id 컬럼은 UNIQUE 제약조건에 의해 자동으로 인덱싱됩니다.
-CREATE INDEX uuidx_user_phone ON user_info(phone) WHERE phone IS NOT NULL; -- 전화번호 검색 (NULL 제외)
+-- Comments
+COMMENT ON TABLE user_info_new IS '모든 사용자의 기본 정보를 저장하는 테이블 (UUID PK 및 새 규칙 적용 버전).';
+COMMENT ON COLUMN user_info_new.internal_user_info_uuid IS '내부 시스템 전용 고유 식별자 (UUID, PK).';
+COMMENT ON COLUMN user_info_new.user_info_public_id IS '외부에 공개될 수 있는 사용자의 고유 식별자 (TEXT, gen_random_id 사용).';
+COMMENT ON COLUMN user_info_new.account_links IS '사용자의 다른 내부 서비스/모듈 계정 연결 정보 (JSONB). 예: {"team_uuid": "팀UUID", "organization_uuid": "조직UUID"}';
+COMMENT ON COLUMN user_info_new.username IS '사용자 별명 또는 로그인 ID (CITEXT, UNIQUE, NULL 가능). 앱 레벨에서 고유성 및 정책 관리.';
+COMMENT ON COLUMN user_info_new.full_name IS '사용자의 전체 이름 (실명).';
+COMMENT ON COLUMN user_info_new.email IS '사용자 이메일 주소 (CITEXT, UNIQUE NOT NULL).';
+COMMENT ON COLUMN user_info_new.phone IS '사용자 전화번호 (CITEXT, UNIQUE, NULL 가능). 국가번호 포함 권장.';
+COMMENT ON COLUMN user_info_new.profile_img_url IS '사용자 프로필 사진 URL (외부 저장소 URL).';
+COMMENT ON COLUMN user_info_new.bio IS '사용자 자기소개.';
+COMMENT ON COLUMN user_info_new.account_type IS '사용자 계정 유형 (user_account_type_enum 참조). 기본값: individual.';
+COMMENT ON COLUMN user_info_new.account_status IS '사용자 계정 상태 (user_account_status_enum 참조). 기본값: pending_verification.';
+COMMENT ON COLUMN user_info_new.is_active IS '계정 활성화 여부 플래그. account_status와 연동될 수 있음. 기본값: FALSE.';
+COMMENT ON COLUMN user_info_new.is_beta_tester IS '베타 테스터 여부. 기본값: FALSE.';
+COMMENT ON COLUMN user_info_new.email_verified_at IS '이메일 인증 완료 시각 (TIMESTAMPTZ, UTC).';
+COMMENT ON COLUMN user_info_new.phone_verified_at IS '전화번호 인증 완료 시각 (TIMESTAMPTZ, UTC).';
+COMMENT ON COLUMN user_info_new.nation IS '사용자 국가 코드 (ISO 3166-1 Alpha-2).';
+COMMENT ON COLUMN user_info_new.timezone IS '사용자 선호 시간대 (IANA Time Zone Database). 기본값: UTC.';
+COMMENT ON COLUMN user_info_new.language IS '사용자 선호 서비스 UI 언어. 기본값: en.';
+COMMENT ON COLUMN user_info_new.agreed_terms_at IS '서비스 이용약관 동의 시각 (TIMESTAMPTZ, UTC).';
+COMMENT ON COLUMN user_info_new.agreed_privacy_at IS '개인정보 수집 및 이용 동의 시각 (TIMESTAMPTZ, UTC).';
+COMMENT ON COLUMN user_info_new.agreed_marketing_at IS '마케팅 정보 수신 동의 시각 (TIMESTAMPTZ, UTC).';
+COMMENT ON COLUMN user_info_new.last_login_at IS '마지막 로그인 시각 (TIMESTAMPTZ, UTC).';
+COMMENT ON COLUMN user_info_new.created_at IS '레코드 생성 시각 (TIMESTAMPTZ, UTC). 기본값: 현재 시각.';
+COMMENT ON COLUMN user_info_new.updated_at IS '레코드 마지막 수정 시각 (TIMESTAMPTZ, UTC). 기본값: 현재 시각 (트리거로 자동 업데이트).';
 
--- updated_at 컬럼 자동 갱신 트리거
--- (set_updated_at() 함수는 '00_common_functions_and_types.sql' 파일에 정의될 예정)
-CREATE TRIGGER trg_set_updated_at_user_info
-BEFORE UPDATE ON user_info
-FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+-- Indexes (새 규칙 및 컬럼명 변경에 따라 인덱스명도 조정)
+-- user_info_public_id, email, phone, username은 UNIQUE 제약조건으로 자동 인덱스 생성됨.
+CREATE INDEX idx_user_info_new_account_type ON user_info_new(account_type);
+CREATE INDEX idx_user_info_new_account_status ON user_info_new(account_status);
+CREATE INDEX idx_user_info_new_is_active ON user_info_new(is_active); -- 특정 값 필터링에 부분 인덱스 고려 가능
+-- 예: CREATE INDEX idx_user_info_new_active_users ON user_info_new(internal_user_info_uuid) WHERE is_active = TRUE;
+
+/*
+설계 근거:
+1. PK 규칙: `internal_user_info_uuid UUID PK DEFAULT uuid_generate_v4()` 적용.
+2. 외부 ID 규칙: `user_info_public_id TEXT UNIQUE NOT NULL DEFAULT gen_random_id('usr_', 16)` 적용.
+3. Timestamp 규칙: 모든 날짜/시간 컬럼 `TIMESTAMPTZ` (UTC 저장 가정) 적용. `timezone` 컬럼 기본값 'UTC'로 설정.
+4. Email/Phone 규칙: `CITEXT` + `UNIQUE` 적용. (CITEXT 확장 필요 명시)
+5. BOOLEAN 규칙: `NOT NULL DEFAULT FALSE` (또는 TRUE) 명시.
+6. JSONB 규칙: `account_links` 컬럼에 내부 구조 예시 및 한글 주석 명시. (기존 `oauth_links`는 `user_oauth` 테이블과의 역할 중복으로 제거 고려)
+7. 주석 블록: 파일 끝에 설계 근거 요약 (본 주석 블록이 해당).
+*/
