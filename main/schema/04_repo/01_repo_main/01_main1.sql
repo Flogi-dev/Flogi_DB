@@ -12,8 +12,8 @@
 
 -- 테이블명: repo_main
 CREATE TABLE repo_main (
-    repo_id id PRIMARY KEY DEFAULT gen_random_id(),    -- 저장소의 고유 식별자 (PK)
-    owner_id id NOT NULL REFERENCES user_info(id) ON DELETE RESTRICT, -- 이 저장소를 서비스에 등록한 소유 사용자
+    repo_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),    -- 저장소의 고유 식별자 (PK) [기존 repo_uuid에서 변경]
+    owner_id UUID NOT NULL REFERENCES user_info(uuid) ON DELETE RESTRICT, -- 이 저장소를 서비스에 등록한 소유 사용자 (user_info.uuid 참조) [기존 owner_uuid에서 변경, user_info.id 참조였으나 uuid로 변경]
     
     name TEXT NOT NULL,                                      -- 저장소 이름 (VCS 플랫폼 기준)
     vcs_platform repo_vcs_platform_enum NOT NULL,            -- 저장소가 호스팅되는 VCS 플랫폼 (04_repo_module/00_repo_enums_and_types.sql 정의 예정)
@@ -41,8 +41,8 @@ CREATE TABLE repo_main (
 );
 
 COMMENT ON TABLE repo_main IS 'Comfort Commit 서비스에 등록된 외부 소스 코드 저장소의 기본 마스터 정보 및 주요 Git 메타데이터를 저장합니다.';
-COMMENT ON COLUMN repo_main.repo_id IS '저장소의 서비스 내 고유 식별 id입니다.';
-COMMENT ON COLUMN repo_main.owner_id IS '이 저장소를 Comfort Commit 서비스에 등록하고 기본 소유권을 가지는 사용자의 id (user_info.id 참조)입니다.';
+COMMENT ON COLUMN repo_main.repo_id IS '저장소의 서비스 내 고유 식별 ID입니다.';
+COMMENT ON COLUMN repo_main.owner_id IS '이 저장소를 Comfort Commit 서비스에 등록하고 기본 소유권을 가지는 사용자의 ID (user_info.uuid 참조)입니다.';
 COMMENT ON COLUMN repo_main.name IS 'VCS 플랫폼에서의 저장소 이름입니다.';
 COMMENT ON COLUMN repo_main.vcs_platform IS '저장소가 호스팅되는 Version Control System 플랫폼의 유형입니다 (04_repo_module/00_repo_enums_and_types.sql 정의 예정).';
 COMMENT ON COLUMN repo_main.remote_url IS '저장소의 원격 URL (예: git clone 주소) 입니다. 일반적으로 origin을 기준으로 합니다.';
@@ -62,8 +62,8 @@ COMMENT ON COLUMN repo_main.updated_at IS '이 저장소 메타데이터 레코�
 COMMENT ON CONSTRAINT uq_repo_main_owner_platform_name ON repo_main IS '한 명의 사용자는 동일 VCS 플랫폼에 동일한 이름의 저장소를 중복하여 등록할 수 없습니다.';
 
 -- 인덱스
-CREATE INDEX uuidx_repo_main_owner_id ON repo_main(owner_id);
-CREATE INDEX uuidx_repo_main_vcs_platform ON repo_main(vcs_platform);
+CREATE INDEX idx_repo_main_owner_id ON repo_main(owner_id); -- 컬럼명 변경 반영
+CREATE INDEX idx_repo_main_vcs_platform ON repo_main(vcs_platform); -- 컬럼명 변경 반영
 -- remote_url은 UNIQUE 제약조건에 의해 자동으로 인덱싱됩니다.
 
 -- updated_at 컬럼 자동 갱신 트리거

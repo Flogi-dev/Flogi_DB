@@ -11,13 +11,13 @@
 
 -- 테이블명: repo_access_permissions
 CREATE TABLE repo_access_permissions (
-    permission_uuid id PRIMARY KEY DEFAULT gen_random_id(), -- 권한 레코드의 고유 식별자 (PK)
-    repo_id id NOT NULL REFERENCES repo_main(repo_id) ON DELETE CASCADE, -- 권한 대상 저장소 (FK)
-    user_id id NOT NULL REFERENCES user_info(id) ON DELETE CASCADE, -- 권한을 부여받는 사용자 (FK)
+    permission_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- 권한 레코드의 고유 식별자 (PK) [기존 permission_uuid에서 변경]
+    repo_id UUID NOT NULL REFERENCES repo_main(repo_id) ON DELETE CASCADE, -- 권한 대상 저장소 (FK) [기존 repo_uuid에서 변경]
+    user_id UUID NOT NULL REFERENCES user_info(uuid) ON DELETE CASCADE, -- 권한을 부여받는 사용자 (FK) [기존 user_uuid에서 변경, user_info.uuid 참조로 변경]
     
     access_level repo_access_level_enum NOT NULL,          -- 이 사용자에게 부여된 접근 수준 (04_repo_module/00_repo_enums_and_types.sql 정의 예정)
     
-    granted_by_user_id id REFERENCES user_info(id) ON DELETE SET NULL, -- 이 권한을 부여한 사용자 (시스템 또는 저장소 소유자/관리자)
+    granted_by_user_id UUID REFERENCES user_info(uuid) ON DELETE SET NULL, -- 이 권한을 부여한 사용자 (시스템 또는 저장소 소유자/관리자) [기존 granted_by_user_uuid에서 변경, user_info.uuid 참조로 변경]
     permission_start_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 권한 효력 시작일
     permission_end_date TIMESTAMP,                          -- 권한 효력 만료일 (NULL이면 영구)
     
@@ -30,11 +30,11 @@ CREATE TABLE repo_access_permissions (
 );
 
 COMMENT ON TABLE repo_access_permissions IS 'Comfort Commit 서비스 내에서 특정 저장소에 대한 사용자별 접근 권한을 정의하고 관리합니다.';
-COMMENT ON COLUMN repo_access_permissions.permission_uuid IS '각 권한 설정 레코드의 고유 식별 id입니다.';
-COMMENT ON COLUMN repo_access_permissions.repo_id IS '권한이 적용되는 대상 저장소의 id (repo_main.repo_id 참조)입니다.';
-COMMENT ON COLUMN repo_access_permissions.user_id IS '접근 권한을 부여받는 사용자의 id (user_info.id 참조)입니다.';
+COMMENT ON COLUMN repo_access_permissions.permission_id IS '각 권한 설정 레코드의 고유 식별 ID입니다.';
+COMMENT ON COLUMN repo_access_permissions.repo_id IS '권한이 적용되는 대상 저장소의 ID (repo_main.repo_id 참조)입니다.';
+COMMENT ON COLUMN repo_access_permissions.user_id IS '접근 권한을 부여받는 사용자의 ID (user_info.uuid 참조)입니다.';
 COMMENT ON COLUMN repo_access_permissions.access_level IS '부여된 접근 권한의 수준입니다 (04_repo_module/00_repo_enums_and_types.sql 정의된 repo_access_level_enum 값).';
-COMMENT ON COLUMN repo_access_permissions.granted_by_user_id IS '이 접근 권한을 부여한 관리자 또는 시스템 주체의 사용자 id입니다.';
+COMMENT ON COLUMN repo_access_permissions.granted_by_user_id IS '이 접근 권한을 부여한 관리자 또는 시스템 주체의 사용자 ID (user_info.uuid 참조)입니다.';
 COMMENT ON COLUMN repo_access_permissions.permission_start_date IS '이 접근 권한이 효력을 발휘하기 시작하는 시각입니다.';
 COMMENT ON COLUMN repo_access_permissions.permission_end_date IS '이 접근 권한의 효력이 만료되는 시각입니다. NULL인 경우 영구적인 권한을 의미합니다.';
 COMMENT ON COLUMN repo_access_permissions.notes IS '이 권한 설정에 대한 추가적인 설명이나 관리자 메모입니다.';
@@ -43,9 +43,9 @@ COMMENT ON COLUMN repo_access_permissions.updated_at IS '이 권한 정보가 �
 COMMENT ON CONSTRAINT uq_repo_user_permission ON repo_access_permissions IS '한 명의 사용자는 특정 저장소에 대해 하나의 접근 권한 레벨만 가질 수 있도록 보장합니다.';
 
 -- 인덱스
-CREATE INDEX uuidx_repo_access_permissions_user_id ON repo_access_permissions(user_id);
-CREATE INDEX uuidx_repo_access_permissions_repo_id ON repo_access_permissions(repo_id);
-CREATE INDEX uuidx_repo_access_permissions_repo_user_level ON repo_access_permissions(repo_id, user_id, access_level);
+CREATE INDEX idx_repo_access_permissions_user_id ON repo_access_permissions(user_id); -- 컬럼명 및 인덱스명 변경 반영 (기존 uuidx_ 접두사에서 표준 idx_로 변경)
+CREATE INDEX idx_repo_access_permissions_repo_id ON repo_access_permissions(repo_id); -- 컬럼명 및 인덱스명 변경 반영 (기존 uuidx_ 접두사에서 표준 idx_로 변경)
+CREATE INDEX idx_repo_access_permissions_repo_user_level ON repo_access_permissions(repo_id, user_id, access_level); -- 컬럼명 및 인덱스명 변경 반영 (기존 uuidx_ 접두사에서 표준 idx_로 변경)
 
 -- updated_at 컬럼 자동 갱신 트리거
 CREATE TRIGGER trg_set_updated_at_repo_access_permissions
